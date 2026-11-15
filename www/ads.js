@@ -1,11 +1,11 @@
 /* ads.js — AdMob bridge for Anurag PDF Maker
  *
- * Launch flow: splash -> "Continue to App" popup -> tap -> App Open ad -> app opens.
+ * Launch flow: splash (App Open ad loads in the background) -> App Open ad -> main app opens.
  * Create flow: tap Create PDF -> Interstitial ad -> (ad closed) -> Export screen with Save / Share.
  *
  * PLACEHOLDER_IN_APP = true  -> no real AdMob SDK calls, only the placeholder popups/banner strip.
  * PLACEHOLDER_IN_APP = false -> inside the Android app real AdMob ads are used (@capacitor-community/admob).
- *                               Browser preview still shows placeholders.
+ *                               Browser preview still shows the placeholder popup.
  *
  * USE_TEST_ADS = true  -> Google's official test ad units (safe, always fill). Use while testing.
  * USE_TEST_ADS = false -> the LIVE ad units below. Set this after the app is published and AdMob review is done.
@@ -46,7 +46,9 @@
   let bannerOn = false;
   let bannerHidden = false;
   let watching = false;
+  /* app open state */
   let appOpenListeners = false;
+  let appOpenPreload = null;    // promise of the App Open ad load (started while the splash is still visible)
   let lastAppOpenError = null;
   /* interstitial state */
   let intReady = false;          // an interstitial is loaded and waiting
@@ -80,11 +82,8 @@
     });
   }
 
-  /* ---------- popup (launch popup + browser/demo placeholders) ----------
-   * label      : small yellow badge on top (empty string = no badge)
-   * beforeClose: optional async function that runs when the button is tapped (used to show the real ad);
-   *              the popup closes after it finishes. */
-  function placeholderPopup(label, adId, sub, onClose, beforeClose) {
+  /* ---------- placeholder popups (browser preview / demo only) ---------- */
+  function placeholderPopup(label, adId, sub, onClose) {
     const logo = (typeof APP_LOGO_SVG !== 'undefined') ? APP_LOGO_SVG : '';
     const wrap = document.createElement('div');
     wrap.style.cssText = 'position:fixed;inset:0;z-index:3000;background:rgba(17,24,39,.62);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:24px;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;';
@@ -99,19 +98,7 @@
         '<button id="__adClose" style="width:100%;border:none;border-radius:12px;height:50px;background:linear-gradient(135deg,#D90429,#A4001B);color:#fff;font-weight:800;font-size:14px;cursor:pointer;box-shadow:0 6px 13px rgba(217,4,41,.28)">Continue to App &rarr;</button>' +
       '</div>';
     document.body.appendChild(wrap);
-    const btn = wrap.querySelector('#__adClose');
-    let busy = false;
-    btn.onclick = async function () {
-      if (busy) return;
-      busy = true;
-      if (beforeClose) {
-        btn.style.opacity = '.6';
-        btn.textContent = 'Loading ad...';
-        try { await beforeClose(); } catch (e) { console.warn('Ad step failed', e); }
-      }
-      wrap.remove();
-      if (onClose) onClose();
-    };
+    wrap.querySelector('#__adClose').onclick = function () { wrap.remove(); if (onClose) onClose(); };
   }
 
   function placeholderBanner() {
@@ -161,26 +148,38 @@
     return intLoading;
   }
 
-  /* ---------- native App Open ad (runs when the launch popup button is tapped) ---------- */
+  /* ---------- native App Open ad ----------
+   * The plugin's App Open API is loadAppOpen() + isAppOpenLoaded() + showAppOpen().
+   * The ad is requested as soon as the script loads, so it is usually ready when the splash is finished. */
+  function loadAppOpenAd() {
+    if (appOpenPreload) return appOpenPreload;
+    appOpenPreload = (async function () {
+      await Ads.init();
+      if (!appOpenListeners && typeof AdMob.addListener === 'function') {
+        appOpenListeners = true;
+        try {
+          AdMob.addListener('appOpenAdFailedToLoad', function (err) { lastAppOpenError = err; });
+          AdMob.addListener('appOpenAdFailedToShow', function (err) { lastAppOpenError = err; });
+        } catch (e) {}
+      }
+      await AdMob.loadAppOpen({ adId: ids().appOpen });
+    })();
+    return appOpenPreload;
+  }
+
   async function runAppOpenAd() {
     try {
-      // The plugin's App Open API is loadAppOpen() + isAppOpenLoaded() + showAppOpen().
       if (typeof AdMob.loadAppOpen === 'function' && typeof AdMob.showAppOpen === 'function') {
-        if (!appOpenListeners && typeof AdMob.addListener === 'function') {
-          appOpenListeners = true;
-          try {
-            AdMob.addListener('appOpenAdFailedToLoad', function (err) { lastAppOpenError = err; });
-            AdMob.addListener('appOpenAdFailedToShow', function (err) { lastAppOpenError = err; });
-          } catch (e) {}
-        }
-        await AdMob.loadAppOpen({ adId: ids().appOpen });
-        // wait (max ~7 s) until the ad is really loaded
+        try { await loadAppOpenAd(); }
+        catch (e1) { appOpenPreload = null; await wait(500); await loadAppOpenAd(); }   // one retry
+        // wait (max ~5 s) until the ad is really loaded
         let ready = typeof AdMob.isAppOpenLoaded !== 'function';
-        for (let i = 0; i < 14 && !ready; i++) {
+        for (let i = 0; i < 10 && !ready; i++) {
           try { const r = await AdMob.isAppOpenLoaded(); ready = !!(r && r.value); } catch (e) { ready = true; }
           if (!ready) await wait(500);
         }
         if (!ready) throw new Error((lastAppOpenError && lastAppOpenError.message) || 'ad did not load (no fill / unit not active yet)');
+        appOpenPreload = null;
         await AdMob.showAppOpen();
         return;
       }
@@ -191,9 +190,10 @@
       }
       throw new Error('App Open API missing in plugin');
     } catch (e) {
+      appOpenPreload = null;
       console.warn('App open ad failed', e);
       debugToast('App Open: ' + ((e && e.message) || (lastAppOpenError && lastAppOpenError.message) || e));
-      // Fallback: show an interstitial so an ad is always shown after the tap
+      // Fallback: show an interstitial so an ad is still shown at launch
       try {
         await AdMob.prepareInterstitial({ adId: ids().interstitial });
         intReady = false;
@@ -214,13 +214,13 @@
       }
     },
 
-    /* Launch popup — call right after the splash screen.
-     * The user taps "Continue to App" -> the App Open ad is shown -> the popup closes and the app opens. */
+    /* App Open ad — call right after the splash screen.
+     * Native app: the App Open ad is shown directly (no popup), then the main app is visible.
+     * Browser preview: shows the placeholder popup. */
     async showAppOpen() {
       await Ads.init();
-      return new Promise(function (res) {
-        placeholderPopup('', ids().appOpen, 'Your PDF tools are ready.', res, AdMob ? runAppOpenAd : null);
-      });
+      if (AdMob) { await runAppOpenAd(); return; }
+      return new Promise(function (res) { placeholderPopup('', ids().appOpen, 'Your PDF tools are ready.', res); });
     },
 
     /* Banner — pinned above bottom nav */
@@ -286,4 +286,9 @@
   };
 
   window.Ads = Ads;
+
+  // Request the App Open ad right away, while the splash screen is still showing
+  if (AdMob && typeof AdMob.loadAppOpen === 'function') {
+    loadAppOpenAd().catch(function () { appOpenPreload = null; });
+  }
 })();
