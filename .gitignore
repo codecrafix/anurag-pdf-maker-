@@ -1,0 +1,6 @@
+node_modules/
+android/
+www/lib/
+*.keystore
+*.jks
+local.properties
