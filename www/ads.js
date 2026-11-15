@@ -8,12 +8,16 @@
  *
  * USE_TEST_ADS = true  -> Google's official test ad units (safe, always fill). Use while testing.
  * USE_TEST_ADS = false -> the LIVE ad units below. Set this before the Play Store release.
+ * LIVE_FORMATS         -> formats that always use the LIVE unit, even while USE_TEST_ADS is true.
+ * DEBUG = true         -> shows a small toast if the App Open ad fails (set false before release).
  * Never click your own live ads.
  */
 (function () {
   const CONFIG = {
     PLACEHOLDER_IN_APP: false,
     USE_TEST_ADS: true,
+    LIVE_FORMATS: ['appOpen'],
+    DEBUG: true,
     TEST: {
       banner:       'ca-app-pub-3940256099942544/6300978111',
       interstitial: 'ca-app-pub-3940256099942544/1033173712',
@@ -28,13 +32,44 @@
     INTERSTITIAL_COOLDOWN_MS: 30000
   };
 
-  const ids = () => (CONFIG.USE_TEST_ADS ? CONFIG.TEST : CONFIG.LIVE);
+  const unit = k => ((CONFIG.USE_TEST_ADS && CONFIG.LIVE_FORMATS.indexOf(k) < 0) ? CONFIG.TEST[k] : CONFIG.LIVE[k]);
+  const ids = () => ({ banner: unit('banner'), interstitial: unit('interstitial'), appOpen: unit('appOpen') });
   const cap = window.Capacitor;
   const isNative = !!(cap && cap.isNativePlatform && cap.isNativePlatform());
   const AdMob = (isNative && !CONFIG.PLACEHOLDER_IN_APP && cap.Plugins) ? cap.Plugins.AdMob : null;
 
   let lastInterstitial = 0;
   let initDone = false;
+  let bannerOn = false;
+  let bannerHidden = false;
+  let watching = false;
+  let appOpenListeners = false;
+  let lastAppOpenError = null;
+
+  function debugToast(msg) {
+    if (CONFIG.DEBUG && typeof toast === 'function') { try { toast(String(msg).slice(0, 110)); } catch (e) {} }
+  }
+
+  /* ---------- banner vs. popups ----------
+   * The native banner floats above the web page. While a tool / export popup is open it would cover the
+   * bottom buttons (Create PDF, Save to Device ...), so the banner is hidden while any popup is open
+   * and shown again when the popup closes. */
+  function callBanner(method) {
+    try { const p = AdMob[method](); if (p && p.catch) p.catch(function () {}); } catch (e) {}
+  }
+  function syncBanner() {
+    if (!AdMob || !bannerOn) return;
+    const open = !!document.querySelector('.modal-overlay.open');
+    if (open && !bannerHidden) { bannerHidden = true; callBanner('hideBanner'); }
+    else if (!open && bannerHidden) { bannerHidden = false; callBanner('resumeBanner'); }
+  }
+  function watchModals() {
+    if (watching) return;
+    watching = true;
+    document.querySelectorAll('.modal-overlay').forEach(function (el) {
+      new MutationObserver(syncBanner).observe(el, { attributes: true, attributeFilter: ['class'] });
+    });
+  }
 
   /* ---------- placeholders (browser preview + demo app) ---------- */
   function placeholderPopup(label, adId, sub, onClose) {
@@ -88,19 +123,37 @@
       await Ads.init();
       if (AdMob) {
         try {
-          // The plugin's App Open API is loadAppOpen() + showAppOpen().
+          // The plugin's App Open API is loadAppOpen() + isAppOpenLoaded() + showAppOpen().
           // Older plugin versions have no App Open API: fall back to an interstitial at launch.
           if (typeof AdMob.loadAppOpen === 'function' && typeof AdMob.showAppOpen === 'function') {
+            if (!appOpenListeners && typeof AdMob.addListener === 'function') {
+              appOpenListeners = true;
+              try {
+                AdMob.addListener('appOpenAdFailedToLoad', function (err) { lastAppOpenError = err; });
+                AdMob.addListener('appOpenAdFailedToShow', function (err) { lastAppOpenError = err; });
+              } catch (e) {}
+            }
             await AdMob.loadAppOpen({ adId: ids().appOpen });
+            // wait (max ~7 s) until the ad is really loaded
+            let ready = typeof AdMob.isAppOpenLoaded !== 'function';
+            for (let i = 0; i < 14 && !ready; i++) {
+              try { const r = await AdMob.isAppOpenLoaded(); ready = !!(r && r.value); } catch (e) { ready = true; }
+              if (!ready) await new Promise(function (r) { setTimeout(r, 500); });
+            }
+            if (!ready) throw new Error((lastAppOpenError && lastAppOpenError.message) || 'ad did not load (no fill / unit not active yet)');
             await AdMob.showAppOpen();
           } else if (typeof AdMob.prepareAppOpen === 'function') {
             await AdMob.prepareAppOpen({ adId: ids().appOpen });
             await AdMob.showAppOpen();
           } else {
+            debugToast('App Open API missing in plugin, using interstitial');
             await AdMob.prepareInterstitial({ adId: ids().interstitial });
             await AdMob.showInterstitial();
           }
-        } catch (e) { console.warn('App open ad failed', e); }
+        } catch (e) {
+          console.warn('App open ad failed', e);
+          debugToast('App Open: ' + ((e && e.message) || (lastAppOpenError && lastAppOpenError.message) || e));
+        }
         return;
       }
       return new Promise(function (res) { placeholderPopup('AdMob App Open Ad', ids().appOpen, 'Your PDF tools are ready.', res); });
@@ -118,6 +171,9 @@
             margin: 68                 // bottom nav height, so banner sits above it
           });
           document.documentElement.style.setProperty('--ad-space', CONFIG.BANNER_HEIGHT + 'px');
+          bannerOn = true;
+          watchModals();
+          syncBanner();
         } catch (e) { console.warn('Banner failed', e); }
         return;
       }
