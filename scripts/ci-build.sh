@@ -2,6 +2,13 @@
 # Builds the debug APK. Called from .github/workflows/build-apk.yml
 set -euo pipefail
 
+# Capacitor 8 needs JDK 21 (preinstalled on the GitHub runner)
+if [ -n "${JAVA_HOME_21_X64:-}" ]; then
+  export JAVA_HOME="$JAVA_HOME_21_X64"
+  export PATH="$JAVA_HOME/bin:$PATH"
+fi
+java -version
+
 export ANDROID_HOME="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 echo "ANDROID_HOME=$ANDROID_HOME"
@@ -21,6 +28,12 @@ sed -i 's/Loading PDF Tools\.\.\./Preparing AdMob \& PDF Studio.../' www/index.h
 
 npx cap add android
 python3 scripts/patch-manifest.py
+
+# Capacitor 8 targets SDK 36 (forced edge-to-edge on Android 15+). Keep targetSdk 34 so the app layout stays exactly the same as before.
+if [ -f android/variables.gradle ]; then
+  sed -i 's/targetSdkVersion = 36/targetSdkVersion = 34/' android/variables.gradle || true
+  grep -n "targetSdkVersion" android/variables.gradle || true
+fi
 
 # Launcher icon, native splash, status/nav bar colours (non-fatal if it fails)
 npm install --no-save sharp || echo "sharp install failed (non-fatal)"

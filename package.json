@@ -7,12 +7,12 @@
     "libs": "mkdir -p www/lib && cp node_modules/pdfjs-dist/build/pdf.min.js node_modules/pdfjs-dist/build/pdf.worker.min.js node_modules/jspdf/dist/jspdf.umd.min.js node_modules/pdf-lib/dist/pdf-lib.min.js www/lib/"
   },
   "dependencies": {
-    "@capacitor/android": "^6.2.0",
-    "@capacitor/cli": "^6.2.0",
-    "@capacitor/core": "^6.2.0",
-    "@capacitor/filesystem": "^6.0.0",
-    "@capacitor/share": "^6.0.0",
-    "@capacitor-community/admob": "^6.0.0",
+    "@capacitor/android": "^8.0.0",
+    "@capacitor/cli": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/filesystem": "^8.0.0",
+    "@capacitor/share": "^8.0.0",
+    "@capacitor-community/admob": "^8.3.0",
     "jspdf": "2.5.1",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "3.11.174"
