@@ -1,7 +1,7 @@
 """Adds AdMob App ID + CAMERA + storage permissions to the generated AndroidManifest.xml."""
 import os, sys
 path = "android/app/src/main/AndroidManifest.xml"
-app_id = os.environ.get("ADMOB_APP_ID") or "ca-app-pub-3940256099942544~3347511713"  # Google TEST app id fallback
+app_id = os.environ.get("ADMOB_APP_ID") or "ca-app-pub-9882062855093591~3831900301"  # AdMob App ID (secret ADMOB_APP_ID overrides if set)
 s = open(path, encoding="utf-8").read()
 if "com.google.android.gms.ads.APPLICATION_ID" not in s:
     s = s.replace("</application>",

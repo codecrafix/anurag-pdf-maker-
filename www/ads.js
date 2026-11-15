@@ -11,7 +11,7 @@
  */
 (function () {
   const CONFIG = {
-    PLACEHOLDER_IN_APP: true,
+    PLACEHOLDER_IN_APP: false,
     USE_TEST_ADS: false,
     TEST: {
       banner:       'ca-app-pub-3940256099942544/6300978111',
@@ -21,7 +21,7 @@
     LIVE: {
       banner:       'ca-app-pub-1713795894529561/8535098465',   // client's banner unit
       interstitial: 'ca-app-pub-1713795894529561/XXXXXXXXXX',   // client's interstitial unit (ID not provided yet)
-      appOpen:      'ca-app-pub-1713795894529561/649896003'    // client's app-open unit
+      appOpen:      'ca-app-pub-9882062855093591/8796601733'    // app-open unit
     },
     BANNER_HEIGHT: 56,            // px reserved above bottom nav
     INTERSTITIAL_COOLDOWN_MS: 30000
