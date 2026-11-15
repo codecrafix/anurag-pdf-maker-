@@ -407,7 +407,7 @@ async function showExport(files, alreadySaved) {
   if (!$('#exportModal').classList.contains('open')) openModal('exportModal');
   if ($('#tab-files').classList.contains('active')) renderMyFiles();
 }
-/* Ask for file-save permission (native Android). Resolves true if saving is allowed. */
+/* One-time storage permission (native Android). Asked once at app start, after the ads, and re-checked on Save. */
 async function ensureSavePermission() {
   if (!(isNative && Capacitor.Plugins.Filesystem)) return true;     // browser: the browser handles the download itself
   const FS = Capacitor.Plugins.Filesystem;
@@ -438,11 +438,22 @@ async function shareFiles(files) {
 }
 $('#btnSave').onclick = async () => {
   try {
-    // The ad was already shown right after Create, so Save goes straight to the permission request + download.
+    // The ad was already shown right after Create. Permission was asked once at app start (re-checked here, no dialog if already granted).
     if (!(await ensureSavePermission())) { toast('Storage permission is required to save the file.'); return; }
-    let where = ''; for (const f of exportList) where = await saveToDevice(f);
-    toast('Saved to ' + where);
-  } catch (e) { console.error(e); toast('Could not save file. Check storage permission.'); }
+    let where = '';
+    try {
+      for (const f of exportList) where = await saveToDevice(f);
+      toast('Saved to ' + where);
+    } catch (e1) {
+      // Newer Android versions can block direct writes to the Documents folder. Fall back to the system save sheet.
+      console.warn('Direct save failed, using share sheet', e1);
+      if (isNative && await shareFiles(exportList)) toast('Choose "Save to device" / "Files" to store the PDF.');
+      else throw e1;
+    }
+  } catch (e) {
+    if (e && /cancel|abort/i.test(e.name + e.message)) return;
+    console.error(e); toast('Could not save file. Check storage permission.');
+  }
 };
 $('#btnShare').onclick = async () => {
   try { await Ads.showInterstitial(); if (!(await shareFiles(exportList))) toast('Sharing is not supported here. Use Save to Device.'); }
@@ -733,7 +744,8 @@ function toolLockUnlock(body, lock) {
   setTimeout(async () => {
     $('#splashScreen').classList.add('hide');
     await Ads.showAppOpen();      // AD 1: App Open ad right after splash
-    Ads.showBanner();             // AD 2: banner above bottom navigation
+    await Ads.showBanner();       // AD 2: banner above bottom navigation
+    await ensureSavePermission(); // ONE storage permission for the whole app, asked once the app is fully open and ads are shown
   }, 2100);
 })();
 </script>
