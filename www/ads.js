@@ -119,10 +119,11 @@
       placeholderBanner();
     },
 
-    /* Interstitial — call when user saves / shares / downloads a file */
-    async showInterstitial() {
+    /* Interstitial — shown after "Create PDF" (before the save/share sheet) and on share / print.
+     * force = true skips the cooldown (used for the Create -> ad -> Save flow so the ad always shows). */
+    async showInterstitial(force) {
       const now = Date.now();
-      if (now - lastInterstitial < CONFIG.INTERSTITIAL_COOLDOWN_MS) return;
+      if (!force && now - lastInterstitial < CONFIG.INTERSTITIAL_COOLDOWN_MS) return;
       await Ads.init();
       if (AdMob) {
         try {
