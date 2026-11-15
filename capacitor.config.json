@@ -1,6 +1,6 @@
 {
   "appId": "com.anurag.pdfmaker",
-  "appName": "Anurag PDF Maker",
+  "appName": "Anurag PDF Making",
   "webDir": "www",
   "server": { "androidScheme": "https" }
 }

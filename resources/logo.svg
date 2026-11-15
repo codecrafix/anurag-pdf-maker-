@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <defs>
+    <linearGradient id="bgR" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FF1E38"/><stop offset="100%" stop-color="#A8001D"/></linearGradient>
+    <clipPath id="rr"><rect width="200" height="200" rx="44"/></clipPath>
+  </defs>
+  <rect width="200" height="200" rx="44" fill="url(#bgR)"/>
+  <g clip-path="url(#rr)">
+    <circle cx="165" cy="35" r="55" fill="#FFFFFF" fill-opacity="0.10"/>
+    <circle cx="32" cy="172" r="46" fill="#FFFFFF" fill-opacity="0.08"/>
+  </g>
+  <path d="M52,32 L120,32 L152,64 L152,158 Q152,170 140,170 L64,170 Q52,170 52,158 Z" fill="#FFFFFF"/>
+  <path d="M120,32 L120,56 Q120,64 128,64 L152,64 Z" fill="#FFD2DA"/>
+  <rect x="68" y="54" width="38" height="7" rx="3.5" fill="#E5E7EB"/>
+  <rect x="68" y="68" width="28" height="6" rx="3" fill="#F1F5F9"/>
+  <rect x="68" y="132" width="66" height="6" rx="3" fill="#E5E7EB"/>
+  <rect x="68" y="144" width="50" height="6" rx="3" fill="#F1F5F9"/>
+  <rect x="38" y="84" width="96" height="38" rx="11" fill="url(#bgR)" stroke="#FFFFFF" stroke-width="3"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="4.2" stroke-linejoin="miter">
+    <path d="M65 110V93H71a5 5 0 0 1 0 10H65"/>
+    <path d="M80 93V110H84.5a8.5 8.5 0 0 0 0-17H80Z"/>
+    <path d="M98 110V93H108M98 101H106"/>
+  </g>
+  <circle cx="142" cy="146" r="18" fill="#D90429" stroke="#FFFFFF" stroke-width="3"/>
+  <path d="M133,146 L140,153 L151,140" fill="none" stroke="#FFFFFF" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

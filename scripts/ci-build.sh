@@ -16,8 +16,16 @@ fi
 npm install
 npm run libs
 
+# Client's splash status text (matches the client's app)
+sed -i 's/Loading PDF Tools\.\.\./Preparing AdMob \& PDF Studio.../' www/index.html
+
 npx cap add android
 python3 scripts/patch-manifest.py
+
+# Launcher icon, native splash, status/nav bar colours (non-fatal if it fails)
+npm install --no-save sharp || echo "sharp install failed (non-fatal)"
+node scripts/make-assets.js || echo "make-assets failed (non-fatal)"
+
 npx cap sync android
 
 cd android

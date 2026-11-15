@@ -1,15 +1,17 @@
 /* ads.js — AdMob bridge for Anurag PDF Maker
  *
- * Runs two ways:
- *  1) Inside the Capacitor Android app  -> real AdMob via @capacitor-community/admob
- *  2) In a normal browser (preview)     -> clearly labelled placeholders, no real ads
+ * Two modes:
+ *  PLACEHOLDER_IN_APP = true  -> the app shows the ad placeholders (App Open popup + banner strip)
+ *                                 everywhere, also inside the Android app. This matches the client's demo build.
+ *  PLACEHOLDER_IN_APP = false -> inside the Android app real AdMob ads are used (@capacitor-community/admob).
+ *                                 Browser preview still shows placeholders.
  *
- * IMPORTANT: The IDs below are Google's official TEST IDs. Keep them while developing/testing.
- * Before publishing, replace them with the client's real AdMob IDs and set USE_TEST_ADS = false.
- * Never click your own live ads.
+ * Before the Play Store release: set PLACEHOLDER_IN_APP = false, add the interstitial ID and the real
+ * AdMob App ID (GitHub secret ADMOB_APP_ID). Never click your own live ads.
  */
 (function () {
   const CONFIG = {
+    PLACEHOLDER_IN_APP: true,
     USE_TEST_ADS: false,
     TEST: {
       banner:       'ca-app-pub-3940256099942544/6300978111',
@@ -28,12 +30,12 @@
   const ids = () => (CONFIG.USE_TEST_ADS ? CONFIG.TEST : CONFIG.LIVE);
   const cap = window.Capacitor;
   const isNative = !!(cap && cap.isNativePlatform && cap.isNativePlatform());
-  const AdMob = isNative && cap.Plugins ? cap.Plugins.AdMob : null;
+  const AdMob = (isNative && !CONFIG.PLACEHOLDER_IN_APP && cap.Plugins) ? cap.Plugins.AdMob : null;
 
   let lastInterstitial = 0;
   let initDone = false;
 
-  /* ---------- browser placeholders (preview only) ---------- */
+  /* ---------- placeholders (browser preview + demo app) ---------- */
   function placeholderPopup(label, adId, sub, onClose) {
     const logo = (typeof APP_LOGO_SVG !== 'undefined') ? APP_LOGO_SVG : '';
     const wrap = document.createElement('div');
