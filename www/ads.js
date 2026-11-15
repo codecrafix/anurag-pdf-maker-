@@ -1,6 +1,7 @@
 /* ads.js — AdMob bridge for Anurag PDF Maker
  *
- * Launch flow: splash (App Open ad loads in the background) -> App Open ad -> main app opens.
+ * Launch flow: splash (App Open ad loads in the background) -> App Open ad (splash stays behind it) -> ad closed -> main app opens
+ *              -> banner shows -> storage permission is asked (only after the main app is visible).
  * Create flow: tap Create PDF -> Interstitial ad -> (ad closed) -> Export screen with Save / Share.
  *
  * PLACEHOLDER_IN_APP = true  -> no real AdMob SDK calls, only the placeholder popups/banner strip.
@@ -31,7 +32,8 @@
     },
     BANNER_HEIGHT: 56,            // px reserved above bottom nav
     INTERSTITIAL_COOLDOWN_MS: 30000,
-    INTERSTITIAL_MAX_WAIT_MS: 15000   // safety: never keep the user waiting longer than this after the ad is shown
+    INTERSTITIAL_MAX_WAIT_MS: 15000,  // safety: never keep the user waiting longer than this after the ad is shown
+    APP_OPEN_MAX_WAIT_MS: 30000       // safety: if the "ad closed" signal never arrives, open the app after this long
   };
 
   const unit = k => ((CONFIG.USE_TEST_ADS && CONFIG.LIVE_FORMATS.indexOf(k) < 0) ? CONFIG.TEST[k] : CONFIG.LIVE[k]);
@@ -49,6 +51,7 @@
   /* app open state */
   let appOpenListeners = false;
   let appOpenPreload = null;    // promise of the App Open ad load (started while the splash is still visible)
+  let appOpenWaiter = null;     // resolver, called when the App Open ad is closed (or fails to show)
   let lastAppOpenError = null;
   /* interstitial state */
   let intReady = false;          // an interstitial is loaded and waiting
@@ -149,8 +152,12 @@
   }
 
   /* ---------- native App Open ad ----------
-   * The plugin's App Open API is loadAppOpen() + isAppOpenLoaded() + showAppOpen().
-   * The ad is requested as soon as the script loads, so it is usually ready when the splash is finished. */
+   * The plugin's App Open API is loadAppOpen() + isAppOpenLoaded() + showAppOpen() (plugin 8.x).
+   * The ad is requested as soon as the script loads, so it is usually ready when the splash is finished.
+   * The splash screen stays visible until the ad has been shown AND closed. */
+  function finishAppOpen() {
+    if (appOpenWaiter) { const r = appOpenWaiter; appOpenWaiter = null; r(); }
+  }
   function loadAppOpenAd() {
     if (appOpenPreload) return appOpenPreload;
     appOpenPreload = (async function () {
@@ -159,12 +166,32 @@
         appOpenListeners = true;
         try {
           AdMob.addListener('appOpenAdFailedToLoad', function (err) { lastAppOpenError = err; });
-          AdMob.addListener('appOpenAdFailedToShow', function (err) { lastAppOpenError = err; });
+          AdMob.addListener('appOpenAdFailedToShow', function (err) { lastAppOpenError = err; finishAppOpen(); });
+          AdMob.addListener('appOpenAdClosed', finishAppOpen);
         } catch (e) {}
       }
       await AdMob.loadAppOpen({ adId: ids().appOpen });
     })();
     return appOpenPreload;
+  }
+
+  /* show the loaded App Open ad and resolve only after the user has closed it (so nothing else pops up on top of the ad) */
+  async function showAppOpenAndWait() {
+    const closed = new Promise(function (res) { appOpenWaiter = res; });
+    // backup signal: the WebView goes hidden while the ad is on screen and becomes visible again when it is closed
+    let sawHidden = false;
+    const onVis = function () {
+      if (document.visibilityState === 'hidden') sawHidden = true;
+      else if (sawHidden) finishAppOpen();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    try {
+      await AdMob.showAppOpen();
+      await Promise.race([closed, wait(CONFIG.APP_OPEN_MAX_WAIT_MS)]);
+    } finally {
+      document.removeEventListener('visibilitychange', onVis);
+      appOpenWaiter = null;
+    }
   }
 
   async function runAppOpenAd() {
@@ -180,12 +207,12 @@
         }
         if (!ready) throw new Error((lastAppOpenError && lastAppOpenError.message) || 'ad did not load (no fill / unit not active yet)');
         appOpenPreload = null;
-        await AdMob.showAppOpen();
+        await showAppOpenAndWait();
         return;
       }
       if (typeof AdMob.prepareAppOpen === 'function') {
         await AdMob.prepareAppOpen({ adId: ids().appOpen });
-        await AdMob.showAppOpen();
+        await showAppOpenAndWait();
         return;
       }
       throw new Error('App Open API missing in plugin');
@@ -193,12 +220,8 @@
       appOpenPreload = null;
       console.warn('App open ad failed', e);
       debugToast('App Open: ' + ((e && e.message) || (lastAppOpenError && lastAppOpenError.message) || e));
-      // Fallback: show an interstitial so an ad is still shown at launch
-      try {
-        await AdMob.prepareInterstitial({ adId: ids().interstitial });
-        intReady = false;
-        await AdMob.showInterstitial();
-      } catch (e2) { console.warn('Fallback interstitial failed', e2); }
+      // Fallback: show an interstitial so an ad is still shown at launch (waits until it is closed)
+      try { await Ads.showInterstitial(true); } catch (e2) { console.warn('Fallback interstitial failed', e2); }
     }
   }
 
@@ -215,12 +238,23 @@
     },
 
     /* App Open ad — call right after the splash screen.
-     * Native app: the App Open ad is shown directly (no popup), then the main app is visible.
+     * Native app: the splash stays on screen while the ad loads, the App Open ad is shown directly (no popup),
+     * and this resolves only after the ad has been closed; then the splash fades out and the main app is visible.
      * Browser preview: shows the placeholder popup. */
     async showAppOpen() {
-      await Ads.init();
-      if (AdMob) { await runAppOpenAd(); return; }
-      return new Promise(function (res) { placeholderPopup('', ids().appOpen, 'Your PDF tools are ready.', res); });
+      // index.html hides the splash right before calling this: keep it on screen until the ad is loaded and closed
+      const splash = document.getElementById('splashScreen');
+      if (AdMob && splash) splash.classList.remove('hide');
+      try {
+        await Ads.init();
+        if (AdMob) { await runAppOpenAd(); return; }
+        return await new Promise(function (res) { placeholderPopup('', ids().appOpen, 'Your PDF tools are ready.', res); });
+      } finally {
+        if (AdMob && splash) {
+          splash.classList.add('hide');
+          await wait(450);       // let the splash fade out, so the main app is fully visible before banner / permission
+        }
+      }
     },
 
     /* Banner — pinned above bottom nav */
