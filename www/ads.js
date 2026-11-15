@@ -1,6 +1,7 @@
 /* ads.js — AdMob bridge for Anurag PDF Maker
  *
  * Launch flow: splash -> "Continue to App" popup -> tap -> App Open ad -> app opens.
+ * Create flow: tap Create PDF -> Interstitial ad -> (ad closed) -> Export screen with Save / Share.
  *
  * PLACEHOLDER_IN_APP = true  -> no real AdMob SDK calls, only the placeholder popups/banner strip.
  * PLACEHOLDER_IN_APP = false -> inside the Android app real AdMob ads are used (@capacitor-community/admob).
@@ -9,7 +10,7 @@
  * USE_TEST_ADS = true  -> Google's official test ad units (safe, always fill). Use while testing.
  * USE_TEST_ADS = false -> the LIVE ad units below. Set this after the app is published and AdMob review is done.
  * LIVE_FORMATS         -> formats that always use the LIVE unit, even while USE_TEST_ADS is true.
- * DEBUG = true         -> shows a small toast if the App Open ad fails (set false before release).
+ * DEBUG = true         -> shows a small toast if an ad fails (set false before release).
  * Never click your own live ads.
  */
 (function () {
@@ -29,7 +30,8 @@
       appOpen:      'ca-app-pub-9882062855093591/8796601733'    // app-open unit
     },
     BANNER_HEIGHT: 56,            // px reserved above bottom nav
-    INTERSTITIAL_COOLDOWN_MS: 30000
+    INTERSTITIAL_COOLDOWN_MS: 30000,
+    INTERSTITIAL_MAX_WAIT_MS: 15000   // safety: never keep the user waiting longer than this after the ad is shown
   };
 
   const unit = k => ((CONFIG.USE_TEST_ADS && CONFIG.LIVE_FORMATS.indexOf(k) < 0) ? CONFIG.TEST[k] : CONFIG.LIVE[k]);
@@ -37,6 +39,7 @@
   const cap = window.Capacitor;
   const isNative = !!(cap && cap.isNativePlatform && cap.isNativePlatform());
   const AdMob = (isNative && !CONFIG.PLACEHOLDER_IN_APP && cap.Plugins) ? cap.Plugins.AdMob : null;
+  const wait = ms => new Promise(function (r) { setTimeout(r, ms); });
 
   let lastInterstitial = 0;
   let initDone = false;
@@ -45,6 +48,12 @@
   let watching = false;
   let appOpenListeners = false;
   let lastAppOpenError = null;
+  /* interstitial state */
+  let intReady = false;          // an interstitial is loaded and waiting
+  let intLoading = null;         // promise of a load that is in progress
+  let intListeners = false;
+  let intWaiter = null;          // resolver, called when the user closes the ad
+  let lastIntError = null;
 
   function debugToast(msg) {
     if (CONFIG.DEBUG && typeof toast === 'function') { try { toast(String(msg).slice(0, 110)); } catch (e) {} }
@@ -121,6 +130,37 @@
     dock.parentNode.insertBefore(slot, dock);
   }
 
+  /* ---------- interstitial helpers (native) ---------- */
+  function finishInterstitial() {
+    if (intWaiter) { const r = intWaiter; intWaiter = null; r(); }
+  }
+  function setupInterstitialListeners() {
+    if (intListeners || !AdMob || typeof AdMob.addListener !== 'function') return;
+    intListeners = true;
+    try {
+      AdMob.addListener('interstitialAdDismissed', finishInterstitial);
+      AdMob.addListener('interstitialAdFailedToShow', function (err) { lastIntError = err; finishInterstitial(); });
+      AdMob.addListener('interstitialAdFailedToLoad', function (err) { lastIntError = err; });
+    } catch (e) {}
+  }
+  /* load the next interstitial in the background so it is ready the moment the user taps Create PDF */
+  function preloadInterstitial() {
+    if (!AdMob || intReady) return intLoading || Promise.resolve();
+    if (intLoading) return intLoading;
+    intLoading = (async function () {
+      try {
+        await AdMob.prepareInterstitial({ adId: ids().interstitial });
+        intReady = true;
+      } catch (e) {
+        intReady = false;
+        lastIntError = e;
+      } finally {
+        intLoading = null;
+      }
+    })();
+    return intLoading;
+  }
+
   /* ---------- native App Open ad (runs when the launch popup button is tapped) ---------- */
   async function runAppOpenAd() {
     try {
@@ -138,7 +178,7 @@
         let ready = typeof AdMob.isAppOpenLoaded !== 'function';
         for (let i = 0; i < 14 && !ready; i++) {
           try { const r = await AdMob.isAppOpenLoaded(); ready = !!(r && r.value); } catch (e) { ready = true; }
-          if (!ready) await new Promise(function (r) { setTimeout(r, 500); });
+          if (!ready) await wait(500);
         }
         if (!ready) throw new Error((lastAppOpenError && lastAppOpenError.message) || 'ad did not load (no fill / unit not active yet)');
         await AdMob.showAppOpen();
@@ -156,6 +196,7 @@
       // Fallback: show an interstitial so an ad is always shown after the tap
       try {
         await AdMob.prepareInterstitial({ adId: ids().interstitial });
+        intReady = false;
         await AdMob.showInterstitial();
       } catch (e2) { console.warn('Fallback interstitial failed', e2); }
     }
@@ -198,23 +239,45 @@
           watchModals();
           syncBanner();
         } catch (e) { console.warn('Banner failed', e); }
+        setupInterstitialListeners();
+        preloadInterstitial();         // get the first interstitial ready in the background
         return;
       }
       placeholderBanner();
     },
 
-    /* Interstitial — shown after "Create PDF" (before the save/share sheet) and on share / print.
+    /* Interstitial — shown after "Create PDF" (before the export / save screen) and on share / print.
+     * It resolves only after the user has closed the ad (or after a safety timeout), so the output screen /
+     * share sheet always opens AFTER the ad.
      * force = true skips the cooldown (used for the Create -> ad -> Save flow so the ad always shows). */
     async showInterstitial(force) {
       const now = Date.now();
       if (!force && now - lastInterstitial < CONFIG.INTERSTITIAL_COOLDOWN_MS) return;
       await Ads.init();
       if (AdMob) {
+        setupInterstitialListeners();
         try {
-          await AdMob.prepareInterstitial({ adId: ids().interstitial });
+          if (intLoading) await intLoading;                 // a preload is already running
+          if (!intReady) {                                // not ready: load now, retry once on failure
+            await preloadInterstitial();
+            if (!intReady) { await wait(800); await preloadInterstitial(); }
+          }
+          if (!intReady) {
+            debugToast('Interstitial not loaded: ' + ((lastIntError && lastIntError.message) || 'no fill / no internet'));
+            return;
+          }
+          intReady = false;
+          const closed = new Promise(function (res) { intWaiter = res; });
           await AdMob.showInterstitial();
           lastInterstitial = Date.now();
-        } catch (e) { console.warn('Interstitial failed', e); }
+          await Promise.race([closed, wait(CONFIG.INTERSTITIAL_MAX_WAIT_MS)]);
+        } catch (e) {
+          console.warn('Interstitial failed', e);
+          debugToast('Interstitial: ' + ((e && e.message) || e));
+        } finally {
+          intWaiter = null;
+          setTimeout(preloadInterstitial, 500);             // prepare the next one
+        }
         return;
       }
       lastInterstitial = now;
