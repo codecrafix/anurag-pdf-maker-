@@ -28,9 +28,25 @@ node scripts/make-assets.js || echo "make-assets failed (non-fatal)"
 
 npx cap sync android
 
+# Download the smaller Gradle distribution (-bin instead of -all): fewer network failures, same build result
+sed -i 's/-all\.zip/-bin.zip/' android/gradle/wrapper/gradle-wrapper.properties || true
+
 cd android
 chmod +x gradlew
-./gradlew assembleDebug --no-daemon --stacktrace
+
+# The Gradle download / dependency fetch can fail with "Connection reset" on the CI runner.
+# Retry up to 3 times before giving up.
+for attempt in 1 2 3; do
+  if ./gradlew assembleDebug --no-daemon --stacktrace; then
+    break
+  fi
+  if [ "$attempt" -eq 3 ]; then
+    echo "Gradle build failed 3 times"
+    exit 1
+  fi
+  echo "Gradle attempt $attempt failed, retrying in 15 seconds..."
+  sleep 15
+done
 
 echo "APK files:"
 find app/build/outputs -name "*.apk"
