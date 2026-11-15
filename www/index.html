@@ -394,8 +394,22 @@ async function showExport(files, alreadySaved) {
   const total = files.reduce((s, f) => s + f.blob.size, 0);
   $('#exportFileName').textContent = files.length > 1 ? files.length + ' files ready' : files[0].name;
   $('#exportFileMeta').textContent = '100% Exported • Saved in My Files • ' + fmtSize(total);
+  // AD FIRST: after Create, show the interstitial ad. The Save / Share sheet opens only once the ad is closed.
+  // (Not shown when re-opening an already saved file from My Files.)
+  if (!alreadySaved) { try { await Ads.showInterstitial(true); } catch (e) { console.warn('Ad skipped', e); } }
   if (!$('#exportModal').classList.contains('open')) openModal('exportModal');
   if ($('#tab-files').classList.contains('active')) renderMyFiles();
+}
+/* Ask for file-save permission (native Android). Resolves true if saving is allowed. */
+async function ensureSavePermission() {
+  if (!(isNative && Capacitor.Plugins.Filesystem)) return true;     // browser: the browser handles the download itself
+  const FS = Capacitor.Plugins.Filesystem;
+  try {
+    let st = await FS.checkPermissions();
+    if (st && st.publicStorage === 'granted') return true;
+    st = await FS.requestPermissions();                              // system permission dialog
+    return !!(st && st.publicStorage === 'granted');
+  } catch (e) { return true; }                                       // permission API unavailable: let the save attempt decide
 }
 async function saveToDevice(f) {
   if (isNative && Capacitor.Plugins.Filesystem) {
@@ -417,7 +431,8 @@ async function shareFiles(files) {
 }
 $('#btnSave').onclick = async () => {
   try {
-    await Ads.showInterstitial();                       // AD: when user downloads/saves
+    // The ad was already shown right after Create, so Save goes straight to the permission request + download.
+    if (!(await ensureSavePermission())) { toast('Storage permission is required to save the file.'); return; }
     let where = ''; for (const f of exportList) where = await saveToDevice(f);
     toast('Saved to ' + where);
   } catch (e) { console.error(e); toast('Could not save file. Check storage permission.'); }
