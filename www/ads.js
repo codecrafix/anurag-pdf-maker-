@@ -6,13 +6,14 @@
  *  PLACEHOLDER_IN_APP = false -> inside the Android app real AdMob ads are used (@capacitor-community/admob).
  *                                 Browser preview still shows placeholders.
  *
- * Before the Play Store release: set PLACEHOLDER_IN_APP = false, add the interstitial ID and the real
- * AdMob App ID (GitHub secret ADMOB_APP_ID). Never click your own live ads.
+ * USE_TEST_ADS = true  -> Google's official test ad units (safe, always fill). Use while testing.
+ * USE_TEST_ADS = false -> the LIVE ad units below. Set this before the Play Store release.
+ * Never click your own live ads.
  */
 (function () {
   const CONFIG = {
     PLACEHOLDER_IN_APP: false,
-    USE_TEST_ADS: false,
+    USE_TEST_ADS: true,
     TEST: {
       banner:       'ca-app-pub-3940256099942544/6300978111',
       interstitial: 'ca-app-pub-3940256099942544/1033173712',
@@ -87,8 +88,12 @@
       await Ads.init();
       if (AdMob) {
         try {
-          // Some plugin versions have no App Open API. Fall back to an interstitial at launch.
-          if (typeof AdMob.prepareAppOpen === 'function') {
+          // The plugin's App Open API is loadAppOpen() + showAppOpen().
+          // Older plugin versions have no App Open API: fall back to an interstitial at launch.
+          if (typeof AdMob.loadAppOpen === 'function' && typeof AdMob.showAppOpen === 'function') {
+            await AdMob.loadAppOpen({ adId: ids().appOpen });
+            await AdMob.showAppOpen();
+          } else if (typeof AdMob.prepareAppOpen === 'function') {
             await AdMob.prepareAppOpen({ adId: ids().appOpen });
             await AdMob.showAppOpen();
           } else {
